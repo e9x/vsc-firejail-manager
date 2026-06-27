@@ -228,7 +228,8 @@ DISTRO_VSCODIUM_RELEASE="${release ?? ''}"
 SERVER_APP_NAME="${serverApplicationName}"
 SERVER_INITIAL_EXTENSIONS="${extensions}"
 SERVER_DATA_DIR="${serverDataDir}"
-SERVER_LISTEN_FLAG="${useSocketPath ? `--socket-path="$SERVER_DATA_DIR/.$DISTRO_COMMIT.sock"` : '--port=0'}"
+SERVER_SOCKETPATH="${useSocketPath ? '$SERVER_DATA_DIR/.$DISTRO_COMMIT.sock' : ''}"
+SERVER_LISTEN_FLAG="${useSocketPath ? `--socket-path="$SERVER_SOCKETPATH"` : '--port=0'}"
 SERVER_DATA_DIR_FLAG="${customInstallPath ? '--server-data-dir="$SERVER_DATA_DIR"' : ''}"
 SERVER_DIR="$SERVER_DATA_DIR/bin/$DISTRO_COMMIT"
 SERVER_SCRIPT="$SERVER_DIR/bin/$SERVER_APP_NAME"
@@ -354,40 +355,47 @@ fi
 # accepting connections.
 #
 # The server listens either on a TCP port (--port=0) or a unix socket
-# (--socket-path=). The log line "Extension host agent listening on <X>" carries
-# a numeric port in the first case and a socket path in the second, so both
-# forms must be handled or socket-path servers are never detected as alive and
-# every resolve respawns a duplicate that collides on the socket (EADDRINUSE).
+# (--socket-path=). Detection MUST NOT rely on the log file as the source of
+# truth for "is something listening": the fresh-start branch below runs
+# 'rm $SERVER_LOGFILE' before respawning, and a respawn that loses the
+# socket race writes only its EADDRINUSE crash to the now-empty log. From then
+# on the log has no "listening on" line, so a log-based check never sees the
+# live server and every attempt respawns + crashes forever.
+#
+# The socket path is deterministic and the socket file (held by the live
+# server) survives all of this, so for socket-path servers we probe the socket
+# DIRECTLY, independent of the log. Only the TCP case (--port=0), where the port
+# is dynamic and not knowable ahead of time, falls back to parsing the log.
 SERVER_RUNNING=
-if [[ -f $SERVER_LOGFILE ]]; then
+if [[ -n $SERVER_SOCKETPATH ]]; then
+    # Unix socket: probe the deterministic socket path directly. A stale socket
+    # file can linger after a crash, so confirm it is actually accepting
+    # connections rather than trusting its mere presence.
+    EXISTING_LISTEN="$SERVER_SOCKETPATH"
+    if command -v curl >/dev/null 2>&1; then
+        if curl --max-time 2 --silent --output /dev/null --unix-socket "$SERVER_SOCKETPATH" "http://localhost/version"; then
+            SERVER_RUNNING=1
+        fi
+    elif command -v nc >/dev/null 2>&1; then
+        if nc -z -U "$SERVER_SOCKETPATH" 2>/dev/null; then
+            SERVER_RUNNING=1
+        fi
+    elif [[ -S $SERVER_SOCKETPATH ]]; then
+        SERVER_RUNNING=1
+    fi
+elif [[ -f $SERVER_LOGFILE ]]; then
+    # TCP port: the port is dynamic, so it can only come from the log. Probe it
+    # to confirm the server is still up.
     EXISTING_LISTEN="$(grep -E 'Extension host agent listening on .+' $SERVER_LOGFILE 2>/dev/null | sed 's/.*Extension host agent listening on //' | tail -1)"
-    if [[ -n $EXISTING_LISTEN ]]; then
-        if [[ $EXISTING_LISTEN =~ ^[0-9]+$ ]]; then
-            # TCP port: probe it to confirm the server is still up.
-            EXISTING_PORT="$EXISTING_LISTEN"
-            if command -v curl >/dev/null 2>&1; then
-                if curl --max-time 2 --silent --output /dev/null "http://127.0.0.1:$EXISTING_PORT/version"; then
-                    SERVER_RUNNING=1
-                fi
-            elif (exec 3<>"/dev/tcp/127.0.0.1/$EXISTING_PORT") 2>/dev/null; then
-                exec 3>&- 3<&-
+    if [[ -n $EXISTING_LISTEN && $EXISTING_LISTEN =~ ^[0-9]+$ ]]; then
+        EXISTING_PORT="$EXISTING_LISTEN"
+        if command -v curl >/dev/null 2>&1; then
+            if curl --max-time 2 --silent --output /dev/null "http://127.0.0.1:$EXISTING_PORT/version"; then
                 SERVER_RUNNING=1
             fi
-        else
-            # Unix socket: confirm the socket exists and is accepting connections.
-            # A stale socket file can linger after a crash, so probe it rather
-            # than trusting its mere presence.
-            if command -v curl >/dev/null 2>&1; then
-                if curl --max-time 2 --silent --output /dev/null --unix-socket "$EXISTING_LISTEN" "http://localhost/version"; then
-                    SERVER_RUNNING=1
-                fi
-            elif command -v nc >/dev/null 2>&1; then
-                if nc -z -U "$EXISTING_LISTEN" 2>/dev/null; then
-                    SERVER_RUNNING=1
-                fi
-            elif [[ -S $EXISTING_LISTEN ]]; then
-                SERVER_RUNNING=1
-            fi
+        elif (exec 3<>"/dev/tcp/127.0.0.1/$EXISTING_PORT") 2>/dev/null; then
+            exec 3>&- 3<&-
+            SERVER_RUNNING=1
         fi
     fi
 fi
@@ -397,6 +405,12 @@ if [[ -z $SERVER_RUNNING ]]; then
     # Fresh start: this is the only place that resets the shared log/token files.
     # The reuse branch below must NOT touch them, or it would clobber the
     # token/port a concurrent resolve attempt already handed to the client.
+    #
+    # We only reach here when the socket probe above found NO live server, so any
+    # socket file still present is stale (left by a crashed server). Remove it, or
+    # the respawn below binds the same --socket-path and dies with EADDRINUSE
+    # against the dead socket, looping forever.
+    if [[ -n $SERVER_SOCKETPATH && -e $SERVER_SOCKETPATH ]]; then rm -f $SERVER_SOCKETPATH; fi
     if [[ -f $SERVER_LOGFILE ]]; then rm $SERVER_LOGFILE; fi
     if [[ -f $SERVER_TOKENFILE ]]; then rm $SERVER_TOKENFILE; fi
     touch $SERVER_TOKENFILE
