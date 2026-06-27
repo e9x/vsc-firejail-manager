@@ -6,6 +6,7 @@ import { openJailConfigFile, promptOpenJailWindow } from './commands';
 import { JailTreeDataProvider } from './jailTreeView';
 import { setJailsConfigPath } from './jail/jailConfig';
 import { registerFirejailCompletionProvider } from './jail/firejailCompletion';
+import { warnIfFirejailMissing } from './jail/detectFirejail';
 
 export async function activate(context: vscode.ExtensionContext) {
     const logger = new Log('Firejail');
@@ -36,6 +37,8 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('firejail.showLog', () => logger.show()));
 
     context.subscriptions.push(registerFirejailCompletionProvider());
+
+    void warnIfFirejailMissing(logger);
 }
 
 export function deactivate() {
