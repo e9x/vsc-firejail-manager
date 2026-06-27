@@ -9,7 +9,82 @@ export type JailConfiguration = {
     privateDir: string;
     privateTmp: boolean;
     noprofile: boolean;
+    // Networking
+    net?: string;
+    netns?: string;
+    dns?: string;
+    ip?: string;
+    hostname?: string;
+    // Devices / IPC
+    nodbus?: boolean;
+    no3d?: boolean;
+    nosound?: boolean;
+    novideo?: boolean;
+    nodvd?: boolean;
+    notv?: boolean;
+    nou2f?: boolean;
+    noinput?: boolean;
+    privateDev?: boolean;
+    // Security
+    nonewprivs?: boolean;
+    noroot?: boolean;
+    seccomp?: boolean;
+    capsDropAll?: boolean;
+    apparmor?: boolean;
+    // Filesystem
+    privateCache?: boolean;
+    disableMnt?: boolean;
+    writableVar?: boolean;
+    writableVarLog?: boolean;
+    writableRunUser?: boolean;
+    keepDevShm?: boolean;
+    machineId?: boolean;
+    // Resource limits
+    timeout?: string;
+    nice?: string;
+    // Escape hatch for anything not modelled above.
     extraArgs: string[];
+};
+
+/**
+ * Maps boolean JailConfiguration fields to the firejail flag they emit.
+ * Single source of truth for arg-building and normalization.
+ */
+const BOOLEAN_FLAGS: { [K in keyof JailConfiguration]?: string } = {
+    nodbus: '--nodbus',
+    no3d: '--no3d',
+    nosound: '--nosound',
+    novideo: '--novideo',
+    nodvd: '--nodvd',
+    notv: '--notv',
+    nou2f: '--nou2f',
+    noinput: '--noinput',
+    privateDev: '--private-dev',
+    nonewprivs: '--nonewprivs',
+    noroot: '--noroot',
+    seccomp: '--seccomp',
+    apparmor: '--apparmor',
+    privateCache: '--private-cache',
+    disableMnt: '--disable-mnt',
+    writableVar: '--writable-var',
+    writableVarLog: '--writable-var-log',
+    writableRunUser: '--writable-run-user',
+    keepDevShm: '--keep-dev-shm',
+    machineId: '--machine-id',
+};
+
+/**
+ * Maps string-valued JailConfiguration fields to the firejail flag they emit
+ * as `--flag=value`. Single source of truth for arg-building.
+ */
+const VALUE_FLAGS: { [K in keyof JailConfiguration]?: string } = {
+    net: '--net',
+    netns: '--netns',
+    dns: '--dns',
+    ip: '--ip',
+    hostname: '--hostname',
+    timeout: '--timeout',
+    nice: '--nice',
 };
 
 let configPathOverride: string | undefined;
@@ -61,6 +136,22 @@ export function buildFirejailArgs(jail: JailConfiguration): string[] {
     if (jail.noprofile) {
         args.push('--noprofile');
     }
+
+    for (const key of Object.keys(BOOLEAN_FLAGS) as (keyof JailConfiguration)[]) {
+        if (jail[key]) {
+            args.push(BOOLEAN_FLAGS[key]!);
+        }
+    }
+    if (jail.capsDropAll) {
+        args.push('--caps.drop=all');
+    }
+    for (const key of Object.keys(VALUE_FLAGS) as (keyof JailConfiguration)[]) {
+        const value = jail[key];
+        if (typeof value === 'string' && value !== '') {
+            args.push(`${VALUE_FLAGS[key]}=${value}`);
+        }
+    }
+
     args.push(...jail.extraArgs);
     return args;
 }
@@ -72,17 +163,37 @@ export function buildFirejailArgs(jail: JailConfiguration): string[] {
  * is reachable directly at 127.0.0.1, so port forwarding is not needed.
  */
 export function usesHostNetwork(jail: JailConfiguration): boolean {
+    if ((typeof jail.net === 'string' && jail.net !== '') || (typeof jail.netns === 'string' && jail.netns !== '')) {
+        return false;
+    }
     return !jail.extraArgs.some(arg => arg === '--net' || arg.startsWith('--net=') || arg === '--netns' || arg.startsWith('--netns='));
 }
 
 function normalizeJail(raw: Partial<JailConfiguration> & { name: string; privateDir: string }): JailConfiguration {
-    return {
+    const result: JailConfiguration = {
         name: raw.name,
         privateDir: raw.privateDir,
         privateTmp: raw.privateTmp ?? true,
         noprofile: raw.noprofile ?? true,
         extraArgs: Array.isArray(raw.extraArgs) ? raw.extraArgs : [],
     };
+
+    for (const key of Object.keys(BOOLEAN_FLAGS) as (keyof JailConfiguration)[]) {
+        if (raw[key] === true) {
+            (result[key] as boolean) = true;
+        }
+    }
+    if (raw.capsDropAll === true) {
+        result.capsDropAll = true;
+    }
+    for (const key of Object.keys(VALUE_FLAGS) as (keyof JailConfiguration)[]) {
+        const value = raw[key];
+        if (typeof value === 'string' && value !== '') {
+            (result[key] as string) = value;
+        }
+    }
+
+    return result;
 }
 
 export default class JailStore {

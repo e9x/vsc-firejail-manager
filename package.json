@@ -81,6 +81,12 @@
 		"onView:firejailJails"
 	],
 	"contributes": {
+		"jsonValidation": [
+			{
+				"fileMatch": "**/jails.json",
+				"url": "./resources/jails.schema.json"
+			}
+		],
 		"configuration": {
 			"title": "Firejail",
 			"properties": {

@@ -1,0 +1,155 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Firejail Jails Configuration",
+    "description": "List of firejail sandbox definitions managed by the Firejail Manager extension.",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "name",
+            "privateDir"
+        ],
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Unique jail name. Cannot contain whitespace or path separators.",
+                "pattern": "^[^\\s\\\\/]+$"
+            },
+            "privateDir": {
+                "type": "string",
+                "description": "Private home directory for the jail (firejail --private=DIR). Supports ~ expansion."
+            },
+            "privateTmp": {
+                "type": "boolean",
+                "description": "Mount a private, empty /tmp inside the jail (firejail --private-tmp).",
+                "default": true
+            },
+            "noprofile": {
+                "type": "boolean",
+                "description": "Do not load any firejail security profile (firejail --noprofile).",
+                "default": true
+            },
+            "net": {
+                "type": "string",
+                "description": "Enable a new network namespace on the given interface (firejail --net=INTERFACE)."
+            },
+            "netns": {
+                "type": "string",
+                "description": "Run in a named network namespace (firejail --netns=NAME)."
+            },
+            "dns": {
+                "type": "string",
+                "description": "Set a DNS server for the jail (firejail --dns=ADDRESS)."
+            },
+            "ip": {
+                "type": "string",
+                "description": "Assign an IP address in the new network namespace (firejail --ip=ADDRESS)."
+            },
+            "hostname": {
+                "type": "string",
+                "description": "Set the jail hostname (firejail --hostname=NAME)."
+            },
+            "nodbus": {
+                "type": "boolean",
+                "description": "Disable D-Bus access (firejail --nodbus)."
+            },
+            "no3d": {
+                "type": "boolean",
+                "description": "Disable 3D hardware acceleration (firejail --no3d)."
+            },
+            "nosound": {
+                "type": "boolean",
+                "description": "Disable sound system (firejail --nosound)."
+            },
+            "novideo": {
+                "type": "boolean",
+                "description": "Disable video devices (firejail --novideo)."
+            },
+            "nodvd": {
+                "type": "boolean",
+                "description": "Disable DVD and CD devices (firejail --nodvd)."
+            },
+            "notv": {
+                "type": "boolean",
+                "description": "Disable DVB TV devices (firejail --notv)."
+            },
+            "nou2f": {
+                "type": "boolean",
+                "description": "Disable U2F devices (firejail --nou2f)."
+            },
+            "noinput": {
+                "type": "boolean",
+                "description": "Disable input devices (firejail --noinput)."
+            },
+            "privateDev": {
+                "type": "boolean",
+                "description": "Mount a minimal /dev (firejail --private-dev)."
+            },
+            "nonewprivs": {
+                "type": "boolean",
+                "description": "Prevent the process from gaining new privileges (firejail --nonewprivs)."
+            },
+            "noroot": {
+                "type": "boolean",
+                "description": "Install a user namespace with a single user (firejail --noroot)."
+            },
+            "seccomp": {
+                "type": "boolean",
+                "description": "Enable seccomp filtering (firejail --seccomp)."
+            },
+            "capsDropAll": {
+                "type": "boolean",
+                "description": "Drop all Linux capabilities (firejail --caps.drop=all)."
+            },
+            "apparmor": {
+                "type": "boolean",
+                "description": "Enable the firejail-default AppArmor profile (firejail --apparmor)."
+            },
+            "privateCache": {
+                "type": "boolean",
+                "description": "Mount an empty temporary ~/.cache (firejail --private-cache)."
+            },
+            "disableMnt": {
+                "type": "boolean",
+                "description": "Disable access to /mnt, /media, /run/mount, and /run/media (firejail --disable-mnt)."
+            },
+            "writableVar": {
+                "type": "boolean",
+                "description": "Mount /var read-write (firejail --writable-var)."
+            },
+            "writableVarLog": {
+                "type": "boolean",
+                "description": "Use the real /var/log directory rather than a tmpfs (firejail --writable-var-log)."
+            },
+            "writableRunUser": {
+                "type": "boolean",
+                "description": "Disable the default blacklisting of /run/user/$UID/systemd and /run/user/$UID/bus (firejail --writable-run-user)."
+            },
+            "keepDevShm": {
+                "type": "boolean",
+                "description": "Preserve /dev/shm when using --private-dev (firejail --keep-dev-shm)."
+            },
+            "machineId": {
+                "type": "boolean",
+                "description": "Spoof the /etc/machine-id value (firejail --machine-id)."
+            },
+            "timeout": {
+                "type": "string",
+                "description": "Kill the jail after the given time, hh:mm:ss (firejail --timeout=hh:mm:ss)."
+            },
+            "nice": {
+                "type": "string",
+                "description": "Set the nice value for the jailed process (firejail --nice=VALUE)."
+            },
+            "extraArgs": {
+                "type": "array",
+                "description": "Additional raw arguments passed to the firejail binary.",
+                "items": {
+                    "type": "string"
+                },
+                "default": []
+            }
+        }
+    }
+}
