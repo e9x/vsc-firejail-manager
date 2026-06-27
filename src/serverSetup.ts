@@ -1,61 +1,38 @@
 import * as crypto from 'crypto';
 import Log from './common/logger';
 import { getVSCodeServerConfig, ServerVersion, ServerValidation } from './serverConfig';
-import SSHConnection from './ssh/sshConnection';
+import JailConnection from './jail/jailConnection';
 import { fetchRelease, IRelease } from './fetchRelease';
 
-/**
- * Matches a hostname against a pattern that may contain wildcards.
- * Returns a specificity score: higher scores indicate more specific matches.
- * Returns -1 if no match.
- */
 function matchHostnamePattern(hostname: string, pattern: string): number {
-	// Exact match has highest priority
-	if (hostname === pattern) {
-		return 1000;
-	}
-
-	// Catch-all wildcard has lowest priority
-	if (pattern === '*') {
-		return 1;
-	}
-
-	// Convert wildcard pattern to regex
-	// Escape special regex characters except *
-	const regexPattern = pattern
-		.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-		.replace(/\*/g, '.*');
-
-	const regex = new RegExp(`^${regexPattern}$`);
-
-	if (regex.test(hostname)) {
-		// Calculate specificity based on the number of non-wildcard characters
-		// More specific patterns (more characters) get higher scores
-		const nonWildcardChars = pattern.replace(/\*/g, '').length;
-		return 10 + nonWildcardChars;
-	}
-
-	return -1;
+    if (hostname === pattern) {
+        return 1000;
+    }
+    if (pattern === '*') {
+        return 1;
+    }
+    const regexPattern = pattern
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*');
+    const regex = new RegExp(`^${regexPattern}$`);
+    if (regex.test(hostname)) {
+        const nonWildcardChars = pattern.replace(/\*/g, '').length;
+        return 10 + nonWildcardChars;
+    }
+    return -1;
 }
 
-/**
- * Finds the best matching path for a hostname from a map of patterns to paths.
- * Supports wildcards with priority: exact match > specific wildcard > general wildcard.
- */
 export function findServerInstallPath(hostname: string, pathMap: Record<string, string>): string | undefined {
-	let bestMatch: { pattern: string; path: string; score: number } | undefined;
-
-	for (const [pattern, path] of Object.entries(pathMap)) {
-		const score = matchHostnamePattern(hostname, pattern);
-
-		if (score > 0) {
-			if (!bestMatch || score > bestMatch.score) {
-				bestMatch = { pattern, path, score };
-			}
-		}
-	}
-
-	return bestMatch?.path;
+    let bestMatch: { pattern: string; path: string; score: number } | undefined;
+    for (const [pattern, path] of Object.entries(pathMap)) {
+        const score = matchHostnamePattern(hostname, pattern);
+        if (score > 0) {
+            if (!bestMatch || score > bestMatch.score) {
+                bestMatch = { pattern, path, score };
+            }
+        }
+    }
+    return bestMatch?.path;
 }
 
 export type ServerInstallOptions = {
@@ -92,10 +69,10 @@ export class ServerInstallError extends Error {
     }
 }
 
-const DEFAULT_DOWNLOAD_URL_TEMPLATE = 'https://github.com/VSCodium/vscodium/releases/download/${version}.${release}/vscodium-reh-${os}-${arch}-${version}.${release}.tar.gz';
+const DEFAULT_DOWNLOAD_URL_TEMPLATE = 'https://update.code.visualstudio.com/commit:${commit}/server-linux-${arch}/${quality}';
 
 export async function installCodeServer(
-    conn: SSHConnection,
+    conn: JailConnection,
     serverDownloadUrlTemplate: string | undefined,
     serverVersion: ServerVersion,
     extensionIds: string[],
@@ -105,40 +82,12 @@ export async function installCodeServer(
     customInstallPath: string | undefined,
     logger: Log
 ): Promise<ServerInstallResult> {
-    let shell = 'powershell';
-
-    // detect platform and shell for windows
-    if (!platform || platform === 'windows') {
-        const result = await conn.exec('uname -s');
-
-        if (result.stdout) {
-            if (result.stdout.includes('windows32')) {
-                platform = 'windows';
-            } else if (result.stdout.includes('MINGW64')) {
-                platform = 'windows';
-                shell = 'bash';
-            }
-        } else if (result.stderr) {
-            if (result.stderr.includes('FullyQualifiedErrorId : CommandNotFoundException')) {
-                platform = 'windows';
-            }
-
-            if (result.stderr.includes('is not recognized as an internal or external command')) {
-                platform = 'windows';
-                shell = 'cmd';
-            }
-        }
-
-        if (platform) {
-            logger.trace(`Detected platform: ${platform}, ${shell}`);
-        }
-    }
+    // Firejail is Linux-only; the platform arg is kept for signature compat.
+    void platform;
 
     const scriptId = crypto.randomBytes(12).toString('hex');
-
     const vscodeServerConfig = await getVSCodeServerConfig();
 
-    // Get the version and release
     const serverDownloadUrlTemplateFinal = serverDownloadUrlTemplate || vscodeServerConfig.serverDownloadUrlTemplate || DEFAULT_DOWNLOAD_URL_TEMPLATE;
     const bestRelease: IRelease = await fetchRelease(serverDownloadUrlTemplateFinal, vscodeServerConfig.version, vscodeServerConfig.release, serverVersion, logger);
 
@@ -158,62 +107,29 @@ export async function installCodeServer(
         serverValidation: vscodeServerConfig.serverValidation,
     };
 
-    let commandOutput: { stdout: string; stderr: string };
-    if (platform === 'windows') {
-        const installServerScript = generatePowerShellInstallScript(installOptions);
+    const installServerScript = generateBashInstallScript(installOptions);
+    logger.trace('Server install command:', installServerScript);
 
-        logger.trace('Server install command:', installServerScript);
-
-        const installDir = `$HOME\\${vscodeServerConfig.serverDataFolderName}\\install`;
-        const installScript = `${installDir}\\${vscodeServerConfig.commit}.ps1`;
-        const endRegex = new RegExp(`${scriptId}: end`);
-
-        // investigate if it's possible to use `-EncodedCommand` flag
-        // https://devblogs.microsoft.com/powershell/invoking-powershell-with-complex-expressions-using-scriptblocks/
-		// eslint-disable-next-line no-useless-assignment
-        let command = '';
-
-        if (shell === 'powershell') {
-            command = `md -Force ${installDir}; echo @'\n${installServerScript}\n'@ | Set-Content ${installScript}; powershell -ExecutionPolicy ByPass -File "${installScript}"`;
-        } else if (shell === 'bash') {
-            command = `mkdir -p ${installDir.replace(/\\/g, '/')} && echo '\n${installServerScript.replace(/'/g, '\'"\'"\'')}\n' > ${installScript.replace(/\\/g, '/')} && powershell -ExecutionPolicy ByPass -File "${installScript}"`;
-        } else if (shell === 'cmd') {
-            const script = installServerScript.trim()
-                // remove comments
-                .replace(/^#.*$/gm, '')
-                // remove empty lines
-                .replace(/\n{2,}/gm, '\n')
-                // remove leading spaces
-                .replace(/^\s*/gm, '')
-                // escape double quotes (from powershell/cmd)
-                .replace(/"/g, '"""')
-                // escape single quotes (from cmd)
-                .replace(/'/g, `''`)
-                // escape redirect (from cmd)
-                .replace(/>/g, `^>`)
-                // escape new lines (from powershell/cmd)
-                .replace(/\n/g, '\'`n\'');
-
-            command = `powershell "md -Force ${installDir}" && powershell "echo '${script}'" > ${installScript.replace('$HOME', '%USERPROFILE%')} && powershell -ExecutionPolicy ByPass -File "${installScript.replace('$HOME', '%USERPROFILE%')}"`;
-
-            logger.trace('Command length (8191 max):', command.length);
-
-            if (command.length > 8191) {
-                throw new ServerInstallError(`Command line too long`);
+    // Resolve as soon as the result block is printed, NOT on process close.
+    // The script backgrounds a long-lived server, and firejail keeps the
+    // `bash -ls` process alive until every descendant in its PID namespace
+    // exits. So the process never closes while the server runs, and a plain
+    // exec() (which resolves on close) would hang forever even though all the
+    // install output is already available. execPartial resolves once the
+    // `${scriptId}: end` marker appears.
+    const endMarker = `${scriptId}: end`;
+    // Stream output live so a hang is visible at the phase it stalls on,
+    // instead of only seeing buffered output after the process closes.
+    const commandOutput = await conn.execPartial(
+        installServerScript,
+        (stdout) => stdout.includes(endMarker),
+        (channel, chunk) => {
+            const text = chunk.replace(/\r?\n$/, '');
+            if (text) {
+                logger.trace(`[install:${channel}] ${text}`);
             }
-        } else {
-            throw new ServerInstallError(`Not supported shell: ${shell}`);
         }
-
-        commandOutput = await conn.execPartial(command, (stdout: string) => endRegex.test(stdout));
-    } else {
-        const installServerScript = generateBashInstallScript(installOptions);
-
-        logger.trace('Server install command:', installServerScript);
-        // Fish shell does not support heredoc so let's workaround it using -c option,
-        // also replace single quotes (') within the script with ('\'') as there's no quoting within single quotes, see https://unix.stackexchange.com/a/24676
-        commandOutput = await conn.exec(`bash -lc '${installServerScript.replace(/'/g, `'\\''`)}'`);
-    }
+    );
 
     if (commandOutput.stderr) {
         logger.trace('Server install command stderr:', commandOutput.stderr);
@@ -227,7 +143,7 @@ export async function installCodeServer(
 
     const exitCode = parseInt(resultMap.exitCode, 10);
     if (exitCode !== 0) {
-        throw new ServerInstallError(`Couldn't install vscode server on remote server, install script returned non-zero exit status`);
+        throw new ServerInstallError(`Couldn't install vscode server in jail, install script returned non-zero exit status`);
     }
 
     const listeningOn = resultMap.listeningOn.match(/^\d+$/)
@@ -252,26 +168,20 @@ export async function installCodeServer(
 function parseServerInstallOutput(str: string, scriptId: string): { [k: string]: string } | undefined {
     const startResultStr = `${scriptId}: start`;
     const endResultStr = `${scriptId}: end`;
-
     const startResultIdx = str.indexOf(startResultStr);
     if (startResultIdx < 0) {
         return undefined;
     }
-
     const endResultIdx = str.indexOf(endResultStr, startResultIdx + startResultStr.length);
     if (endResultIdx < 0) {
         return undefined;
     }
-
     const installResult = str.substring(startResultIdx + startResultStr.length, endResultIdx);
-
     const resultMap: { [k: string]: string } = {};
-    const resultArr = installResult.split(/\r?\n/);
-    for (const line of resultArr) {
+    for (const line of installResult.split(/\r?\n/)) {
         const [key, value] = line.split('==');
         resultMap[key] = value;
     }
-
     return resultMap;
 }
 
@@ -281,7 +191,7 @@ function generateBashInstallScript({ id, quality, version, commit, release, exte
         ? customInstallPath.replace(/^~(?=\/|$)/, '$HOME')
         : `$HOME/${serverDataFolderName}`;
     return `
-# Server installation script
+# Server installation script (jailed)
 
 TMP_DIR="\${XDG_RUNTIME_DIR:-"/tmp"}"
 
@@ -308,9 +218,8 @@ SERVER_VALIDATION_FLAG="${serverValidation === 'skip' ? '--disable-client-valida
 LISTENING_ON=
 OS_RELEASE_ID=
 ARCH=
-PLATFORM=
+PLATFORM=linux
 
-# Mimic output from logs of remote-ssh extension
 print_install_results_and_exit() {
     echo "${id}: start"
     echo "exitCode==$1=="
@@ -327,77 +236,27 @@ print_install_results_and_exit() {
 }
 
 LOCKFILE="$TMP_DIR/server_install.lock"
-
 if command -v flock >/dev/null 2>&1; then
   exec {FD}<>"$LOCKFILE"
-  # wait 30s to acquire lock, otherwise fail
   flock -x -w 30 $FD || print_install_results_and_exit 1
   trap "flock -u $FD; trap - EXIT INT HUP; exit" EXIT INT HUP
-else
-    echo "Warning: flock not available, skipping install lock" >&2
 fi
 
-# Check if platform is supported
-if ! command -v uname; then
-    echo "Error 'uname' command not found, could not get platform/arch data."
-    print_install_results_and_exit 1
-fi
-
-KERNEL="$(uname -s)"
-case $KERNEL in
-    Darwin)
-        PLATFORM="darwin"
-        ;;
-    Linux)
-        PLATFORM="linux"
-        ;;
-    FreeBSD)
-        PLATFORM="freebsd"
-        ;;
-    DragonFly)
-        PLATFORM="dragonfly"
-        ;;
-    "")
-        echo "Error uname -s yields empty result"
-        print_install_results_and_exit 1
-        ;;
-    *)
-        echo "Error platform not supported: $KERNEL"
-        print_install_results_and_exit 1
-        ;;
-esac
-
-# Check machine architecture
 ARCH="$(uname -m)"
 case $ARCH in
-    x86_64 | amd64)
-        SERVER_ARCH="x64"
-        ;;
-    armv7l | armv8l)
-        SERVER_ARCH="armhf"
-        ;;
-    arm64 | aarch64)
-        SERVER_ARCH="arm64"
-        ;;
-    ppc64le)
-        SERVER_ARCH="ppc64le"
-        ;;
-    riscv64)
-        SERVER_ARCH="riscv64"
-        ;;
-    loongarch64)
-        SERVER_ARCH="loong64"
-        ;;
-    s390x)
-        SERVER_ARCH="s390x"
-        ;;
+    x86_64 | amd64) SERVER_ARCH="x64" ;;
+    armv7l | armv8l) SERVER_ARCH="armhf" ;;
+    arm64 | aarch64) SERVER_ARCH="arm64" ;;
+    ppc64le) SERVER_ARCH="ppc64le" ;;
+    riscv64) SERVER_ARCH="riscv64" ;;
+    loongarch64) SERVER_ARCH="loong64" ;;
+    s390x) SERVER_ARCH="s390x" ;;
     *)
         echo "Error architecture not supported: $ARCH"
         print_install_results_and_exit 1
         ;;
 esac
 
-# https://www.freedesktop.org/software/systemd/man/os-release.html
 OS_RELEASE_ID="$(grep -i '^ID=' /etc/os-release 2>/dev/null | sed 's/^ID=//gi' | sed 's/"//g')"
 if [[ -z $OS_RELEASE_ID ]]; then
     OS_RELEASE_ID="$(grep -i '^ID=' /usr/lib/os-release 2>/dev/null | sed 's/^ID=//gi' | sed 's/"//g')"
@@ -406,7 +265,6 @@ if [[ -z $OS_RELEASE_ID ]]; then
     fi
 fi
 
-# Create installation folder
 if [[ ! -d $SERVER_DIR ]]; then
     mkdir -p $SERVER_DIR
     if (( $? > 0 )); then
@@ -415,98 +273,94 @@ if [[ ! -d $SERVER_DIR ]]; then
     fi
 fi
 
-# adjust platform for vscodium download, if needed
 if [[ $OS_RELEASE_ID = alpine ]]; then
     PLATFORM=$OS_RELEASE_ID
 fi
 
 SERVER_DOWNLOAD_URL="$(echo "${serverDownloadUrlTemplate.replace(/\$\{/g, '\\${')}" | sed "s/\\\${quality}/$DISTRO_QUALITY/g" | sed "s/\\\${version}/$DISTRO_VERSION/g" | sed "s/\\\${commit}/$DISTRO_COMMIT/g" | sed "s/\\\${os}/$PLATFORM/g" | sed "s/\\\${arch}/$SERVER_ARCH/g" | sed "s/\\\${release}/$DISTRO_VSCODIUM_RELEASE/g")"
+echo "[phase] arch=$SERVER_ARCH os=$OS_RELEASE_ID download_url=$SERVER_DOWNLOAD_URL" 1>&2
 
-# Check if server script is already installed
 if [[ ! -f $SERVER_SCRIPT ]]; then
-    case "$PLATFORM" in
-        darwin | linux | alpine | freebsd )
-            ;;
-        *)
-            echo "Error '$PLATFORM' needs manual installation of remote extension host"
-            print_install_results_and_exit 1
-            ;;
-    esac
-
     pushd $SERVER_DIR > /dev/null
-
+    echo "[phase] downloading server tarball..." 1>&2
     if command -v wget >/dev/null 2>&1; then
-        wget --tries=3 --timeout=10 --continue --no-verbose -O vscode-server.tar.gz $SERVER_DOWNLOAD_URL
+        wget --tries=3 --timeout=10 --continue --no-verbose -O vscode-server.tar.gz $SERVER_DOWNLOAD_URL 1>&2
     elif command -v curl >/dev/null 2>&1; then
-        curl --retry 3 --connect-timeout 10 --location --show-error --silent --output vscode-server.tar.gz $SERVER_DOWNLOAD_URL
-    elif command -v fetch >/dev/null 2>&1; then
-        fetch --retry --timeout=10 --quiet --output=vscode-server.tar.gz $SERVER_DOWNLOAD_URL
+        curl --retry 3 --connect-timeout 10 --location --show-error --silent --output vscode-server.tar.gz $SERVER_DOWNLOAD_URL 1>&2
     else
         echo "Error no tool to download server binary"
         print_install_results_and_exit 1
     fi
-
     if (( $? > 0 )); then
         echo "Error downloading server from $SERVER_DOWNLOAD_URL"
         rm -rf vscode-server.tar.gz
         print_install_results_and_exit 1
     fi
-
+    echo "[phase] extracting server tarball..." 1>&2
     tar -xf vscode-server.tar.gz --strip-components 1
     if (( $? > 0 )); then
         echo "Error while extracting server contents"
         rm -rf vscode-server.tar.gz
         print_install_results_and_exit 1
     fi
-
     if [[ ! -f $SERVER_SCRIPT ]]; then
         rm -rf $SERVER_DIR/*
         echo "Error server contents are corrupted"
         print_install_results_and_exit 1
     fi
-
     rm -f vscode-server.tar.gz
-
     popd > /dev/null
+    echo "[phase] server installed at $SERVER_SCRIPT" 1>&2
 else
-    echo "Server script already installed in $SERVER_SCRIPT"
+    echo "[phase] server script already installed in $SERVER_SCRIPT" 1>&2
 fi
 
-# Modify the commit in the remote server to match the local value
 if ${serverValidation === 'force' ? 'true' : 'false'}; then
     if command -v sed >/dev/null 2>&1; then
-        echo "Will modify product.json on remote to match the commit value"
-        sed -i -E 's/"commit": "[0-9a-f]+",/"commit": "'"$DISTRO_COMMIT"'",/' "$SERVER_DIR/product.json";
-    else
-        echo "Cannot find the 'sed' command, make sure it is installed to modify product.json with the matching commit."
+        sed -i -E 's/"commit": "[0-9a-f]+",/"commit": "'"$DISTRO_COMMIT"'",/' "$SERVER_DIR/product.json"
     fi
 fi
 
-# Try to find if server is already running
-if [[ -f $SERVER_PIDFILE ]]; then
-    SERVER_PID="$(cat $SERVER_PIDFILE)"
-    SERVER_RUNNING_PROCESS="$(ps -o pid,args -p $SERVER_PID | grep $SERVER_SCRIPT)"
-else
-    SERVER_RUNNING_PROCESS="$(ps -o pid,args -A | grep $SERVER_SCRIPT | grep -v grep)"
+# Detect a still-running server WITHOUT relying on the pidfile. Under firejail's
+# PID namespace the backgrounded server gets a jail-local pid (e.g. 45) that is
+# meaningless to the next jail invocation, so a pid-based check always misses and
+# every attempt respawns + rewrites the token. Instead, treat a server as alive
+# if the log reports a listening port AND that port is actually accepting
+# connections on 127.0.0.1.
+SERVER_RUNNING=
+if [[ -f $SERVER_LOGFILE ]]; then
+    EXISTING_PORT="$(grep -oE 'Extension host agent listening on [0-9]+' $SERVER_LOGFILE 2>/dev/null | grep -oE '[0-9]+' | tail -1)"
+    if [[ -n $EXISTING_PORT ]]; then
+        # Probe the port to confirm the server is still up.
+        if command -v curl >/dev/null 2>&1; then
+            if curl --max-time 2 --silent --output /dev/null "http://127.0.0.1:$EXISTING_PORT/version"; then
+                SERVER_RUNNING=1
+            fi
+        elif (exec 3<>"/dev/tcp/127.0.0.1/$EXISTING_PORT") 2>/dev/null; then
+            exec 3>&- 3<&-
+            SERVER_RUNNING=1
+        fi
+    fi
 fi
 
-if [[ -z $SERVER_RUNNING_PROCESS ]]; then
-    if [[ -f $SERVER_LOGFILE ]]; then
-        rm $SERVER_LOGFILE
-    fi
-    if [[ -f $SERVER_TOKENFILE ]]; then
-        rm $SERVER_TOKENFILE
-    fi
-
+if [[ -z $SERVER_RUNNING ]]; then
+    echo "[phase] starting server process..." 1>&2
+    # Fresh start: this is the only place that resets the shared log/token files.
+    # The reuse branch below must NOT touch them, or it would clobber the
+    # token/port a concurrent resolve attempt already handed to the client.
+    if [[ -f $SERVER_LOGFILE ]]; then rm $SERVER_LOGFILE; fi
+    if [[ -f $SERVER_TOKENFILE ]]; then rm $SERVER_TOKENFILE; fi
     touch $SERVER_TOKENFILE
     chmod 600 $SERVER_TOKENFILE
     SERVER_CONNECTION_TOKEN="${crypto.randomUUID()}"
     echo $SERVER_CONNECTION_TOKEN > $SERVER_TOKENFILE
-
     $SERVER_SCRIPT --start-server --host=127.0.0.1 $SERVER_LISTEN_FLAG $SERVER_DATA_DIR_FLAG $SERVER_VALIDATION_FLAG $SERVER_INITIAL_EXTENSIONS --connection-token-file $SERVER_TOKENFILE --telemetry-level off --enable-remote-auto-shutdown --accept-server-license-terms &> $SERVER_LOGFILE &
     echo $! > $SERVER_PIDFILE
 else
-    echo "Server script is already running $SERVER_SCRIPT"
+    # Reuse the live server. Do NOT rewrite the token file or the log; the port
+    # and token reported below must come from the instance that is actually
+    # listening, so the client connects with credentials that match.
+    echo "[phase] reusing running server on port $EXISTING_PORT" 1>&2
 fi
 
 if [[ -f $SERVER_TOKENFILE ]]; then
@@ -517,6 +371,7 @@ else
 fi
 
 if [[ -f $SERVER_LOGFILE ]]; then
+    echo "[phase] waiting for server to listen..." 1>&2
     for i in {1..35}; do
         LISTENING_ON="$(cat $SERVER_LOGFILE | grep -E 'Extension host agent listening on .+' | sed 's/Extension host agent listening on //')"
         if [[ -n $LISTENING_ON ]]; then
@@ -524,228 +379,18 @@ if [[ -f $SERVER_LOGFILE ]]; then
         fi
         sleep 0.5
     done
-
     if [[ -z $LISTENING_ON ]]; then
         echo "Error server did not start successfully"
+        echo "[phase] server log contents follow:" 1>&2
+        cat $SERVER_LOGFILE 1>&2
         print_install_results_and_exit 1
     fi
+    echo "[phase] server listening on $LISTENING_ON" 1>&2
 else
     echo "Error server log file not found $SERVER_LOGFILE"
     print_install_results_and_exit 1
 fi
 
-# Finish server setup
 print_install_results_and_exit 0
-`;
-}
-
-function generatePowerShellInstallScript({ id, quality, version, commit, release, extensionIds, envVariables, useSocketPath, serverApplicationName, serverDataFolderName, serverDownloadUrlTemplate, customInstallPath, serverValidation }: ServerInstallOptions) {
-    const extensions = extensionIds.map(id => '--install-extension ' + id).join(' ');
-    const downloadUrl = serverDownloadUrlTemplate
-        .replace(/\$\{quality\}/g, quality)
-        .replace(/\$\{version\}/g, version)
-        .replace(/\$\{commit\}/g, commit)
-        .replace(/\$\{os\}/g, 'win32')
-        .replace(/\$\{arch\}/g, 'x64')
-        .replace(/\$\{release\}/g, release ?? '');
-    const serverDataDir = customInstallPath
-        ? customInstallPath.replace(/^~(?=[\\/]|$)/, '$(Resolve-Path ~)')
-        : `$(Resolve-Path ~)\\${serverDataFolderName}`;
-
-    return `
-# Server installation script
-
-$TMP_DIR="$env:TEMP\\$([System.IO.Path]::GetRandomFileName())"
-$ProgressPreference = "SilentlyContinue"
-
-$DISTRO_VERSION="${version}"
-$DISTRO_COMMIT="${commit}"
-$DISTRO_QUALITY="${quality}"
-$DISTRO_VSCODIUM_RELEASE="${release ?? ''}"
-
-$SERVER_APP_NAME="${serverApplicationName}"
-$SERVER_INITIAL_EXTENSIONS="${extensions}"
-$SERVER_LISTEN_FLAG="${useSocketPath ? `--socket-path="$TMP_DIR/vscode-server-sock-${crypto.randomUUID()}"` : '--port=0'}"
-$SERVER_DATA_DIR="${serverDataDir}"
-$SERVER_DATA_DIR_FLAG="${customInstallPath ? '--server-data-dir=""$SERVER_DATA_DIR""' : ''}"
-$SERVER_DIR="$SERVER_DATA_DIR\\bin\\$DISTRO_COMMIT"
-$SERVER_SCRIPT="$SERVER_DIR\\bin\\$SERVER_APP_NAME.cmd"
-$SERVER_LOGFILE="$SERVER_DATA_DIR\\.$DISTRO_COMMIT.log"
-$SERVER_PIDFILE="$SERVER_DATA_DIR\\.$DISTRO_COMMIT.pid"
-$SERVER_TOKENFILE="$SERVER_DATA_DIR\\.$DISTRO_COMMIT.token"
-$SERVER_ARCH=
-$SERVER_CONNECTION_TOKEN=
-$SERVER_DOWNLOAD_URL=
-$SERVER_VALIDATION_FLAG="${serverValidation === 'skip' ? '--disable-client-validation' : ''}"
-
-$LISTENING_ON=
-$OS_RELEASE_ID=
-$ARCH=
-$PLATFORM="win32"
-
-function printInstallResults($code) {
-    "${id}: start"
-    "exitCode==$code=="
-    "listeningOn==$LISTENING_ON=="
-    "connectionToken==$SERVER_CONNECTION_TOKEN=="
-    "logFile==$SERVER_LOGFILE=="
-    "osReleaseId==$OS_RELEASE_ID=="
-    "arch==$ARCH=="
-    "platform==$PLATFORM=="
-    "tmpDir==$TMP_DIR=="
-    ${envVariables.map(envVar => `"${envVar}==$${envVar}=="`).join('\n')}
-    "${id}: end"
-}
-
-# Check machine architecture
-$ARCH=$env:PROCESSOR_ARCHITECTURE
-# Use x64 version for ARM64, as it's not yet available.
-if(($ARCH -eq "AMD64") -or ($ARCH -eq "IA64") -or ($ARCH -eq "ARM64")) {
-    $SERVER_ARCH="x64"
-}
-else {
-    "Error architecture not supported: $ARCH"
-    printInstallResults 1
-    exit 0
-}
-
-# Create installation folder
-if(!(Test-Path $SERVER_DIR)) {
-    try {
-        ni -it d $SERVER_DIR -f -ea si
-    } catch {
-        "Error creating server install directory - $($_.ToString())"
-        exit 1
-    }
-
-    if(!(Test-Path $SERVER_DIR)) {
-        "Error creating server install directory"
-        exit 1
-    }
-}
-
-cd $SERVER_DIR
-
-# Check if server script is already installed
-if(!(Test-Path $SERVER_SCRIPT)) {
-    del vscode-server.tar.gz
-
-    $REQUEST_ARGUMENTS = @{
-        Uri="${downloadUrl}"
-        TimeoutSec=20
-        OutFile="vscode-server.tar.gz"
-        UseBasicParsing=$True
-    }
-
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-    Invoke-RestMethod @REQUEST_ARGUMENTS
-
-    if(Test-Path "vscode-server.tar.gz") {
-        tar -xf vscode-server.tar.gz --strip-components 1
-
-        del vscode-server.tar.gz
-    }
-
-    if(!(Test-Path $SERVER_SCRIPT)) {
-        "Error while installing the server binary"
-        exit 1
-    }
-}
-else {
-    "Server script already installed in $SERVER_SCRIPT"
-}
-
-# Modify the commit in the remote server to match the local value
-if(${serverValidation === 'force' ? '$true' : '$false'}) {
-    echo "Will modify product.json on remote to match the commit value"
-    (Get-Content -Raw "$SERVER_DIR\\product.json") -replace '"commit": "[0-9a-f]+",', ('"commit": "' + $DISTRO_COMMIT + '",') |
-        Set-Content -NoNewLine "$SERVER_DIR\\product.json"
-}
-
-# Try to find if server is already running
-if(Get-Process node -ErrorAction SilentlyContinue | Where-Object Path -Like "$SERVER_DIR\\*") {
-    echo "Server script is already running $SERVER_SCRIPT"
-}
-else {
-    if(Test-Path $SERVER_LOGFILE) {
-        del $SERVER_LOGFILE
-    }
-    if(Test-Path $SERVER_PIDFILE) {
-        del $SERVER_PIDFILE
-    }
-    if(Test-Path $SERVER_TOKENFILE) {
-        del $SERVER_TOKENFILE
-    }
-
-    $SERVER_CONNECTION_TOKEN="${crypto.randomUUID()}"
-    [System.IO.File]::WriteAllLines($SERVER_TOKENFILE, $SERVER_CONNECTION_TOKEN)
-
-    $SCRIPT_ARGUMENTS="--start-server --host=127.0.0.1 $SERVER_LISTEN_FLAG $SERVER_DATA_DIR_FLAG $SERVER_VALIDATION_FLAG $SERVER_INITIAL_EXTENSIONS --connection-token-file $SERVER_TOKENFILE --telemetry-level off --enable-remote-auto-shutdown --accept-server-license-terms *> '$SERVER_LOGFILE'"
-
-    $START_ARGUMENTS = @{
-        FilePath = "powershell.exe"
-        WindowStyle = "hidden"
-        ArgumentList = @(
-            "-ExecutionPolicy", "Unrestricted", "-NoLogo", "-NoProfile", "-NonInteractive", "-c", "$SERVER_SCRIPT $SCRIPT_ARGUMENTS"
-        )
-        PassThru = $True
-    }
-
-    $SERVER_ID = (start @START_ARGUMENTS).ID
-
-    if($SERVER_ID) {
-        [System.IO.File]::WriteAllLines($SERVER_PIDFILE, $SERVER_ID)
-    }
-}
-
-if(Test-Path $SERVER_TOKENFILE) {
-    $SERVER_CONNECTION_TOKEN="$(cat $SERVER_TOKENFILE)"
-}
-else {
-    "Error server token file not found $SERVER_TOKENFILE"
-    printInstallResults 1
-    exit 0
-}
-
-sleep -Milliseconds 500
-
-$SELECT_ARGUMENTS = @{
-    Path = $SERVER_LOGFILE
-    Pattern = "Extension host agent listening on (\\d+)"
-}
-
-for($I = 1; $I -le 5; $I++) {
-    if(Test-Path $SERVER_LOGFILE) {
-        $GROUPS = (Select-String @SELECT_ARGUMENTS).Matches.Groups
-
-        if($GROUPS) {
-            $LISTENING_ON = $GROUPS[1].Value
-            break
-        }
-    }
-
-    sleep -Milliseconds 500
-}
-
-if(!(Test-Path $SERVER_LOGFILE)) {
-    "Error server log file not found $SERVER_LOGFILE"
-    printInstallResults 1
-    exit 0
-}
-
-# Finish server setup
-printInstallResults 0
-
-if($SERVER_ID) {
-    while($True) {
-        if(!(gps -Id $SERVER_ID)) {
-            "server died, exit"
-            exit 0
-        }
-
-        sleep 30
-    }
-}
 `;
 }

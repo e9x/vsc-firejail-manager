@@ -1,9 +1,10 @@
 {
-	"name": "open-remote-ssh",
-	"displayName": "Open Remote - SSH",
-	"description": "Use any remote machine with a SSH server as your development environment.",
-	"version": "0.1.2",
-	"publisher": "jeanp413",
+	"name": "firejail-manager",
+	"displayName": "Firejail Manager",
+	"description": "Manage local firejail sandboxes as VSCode remote targets.",
+	"version": "0.1.0",
+	"author": "e9x",
+	"publisher": "e9x",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/jeanp413/open-remote-ssh.git"
@@ -43,11 +44,7 @@
 	"dependencies": {
 		"@zokugun/is-it-type": "0.8.1",
 		"glob": "13.0.6",
-		"semver": "7.8.4",
-		"simple-socks": "git+https://github.com/jeanp413/simple-socks#main",
-		"socks": "2.8.9",
-		"ssh-config": "5.1.0",
-		"ssh2": "git+https://github.com/jeanp413/ssh2#master"
+		"semver": "7.8.4"
 	},
 	"devDependencies": {
 		"@commitlint/cli": "20.5.3",
@@ -56,8 +53,6 @@
 		"@stylistic/eslint-plugin": "5.10.0",
 		"@types/node": "20.19.43",
 		"@types/semver": "7.7.1",
-		"@types/ssh2": "0.5.52",
-		"@types/ssh2-streams": "0.1.13",
 		"@types/webpack": "5.28.5",
 		"@typescript-eslint/eslint-plugin": "8.61.0",
 		"@typescript-eslint/parser": "8.61.0",
@@ -78,338 +73,274 @@
 		"webpack-cli": "7.0.3"
 	},
 	"activationEvents": [
-		"onCommand:openremotessh.openEmptyWindow",
-		"onCommand:openremotessh.openEmptyWindowInCurrentWindow",
-		"onCommand:openremotessh.openConfigFile",
-		"onCommand:openremotessh.showLog",
-		"onResolveRemoteAuthority:ssh-remote",
-		"onView:sshHosts"
+		"onCommand:firejail.openEmptyWindow",
+		"onCommand:firejail.openEmptyWindowInCurrentWindow",
+		"onCommand:firejail.openConfigFile",
+		"onCommand:firejail.showLog",
+		"onResolveRemoteAuthority:firejail",
+		"onView:firejailJails"
 	],
 	"contributes": {
 		"configuration": {
-			"title": "Remote - SSH",
+			"title": "Firejail",
 			"properties": {
-				"remote.SSH.configFile": {
+				"firejail.configFile": {
 					"type": "string",
-					"description": "The absolute file path to a custom SSH config file.",
+					"description": "Absolute path to the jails.json config file. Defaults to the extension's global storage location.",
 					"default": "",
 					"scope": "application"
 				},
-				"remote.SSH.connectTimeout": {
-					"type": "number",
-					"description": "Specifies the timeout in seconds used for the SSH command that connects to the remote.",
-					"default": 60,
-					"scope": "application",
-					"minimum": 1
+				"firejail.firejailPath": {
+					"type": "string",
+					"description": "Path to the firejail binary. Defaults to 'firejail' on $PATH.",
+					"default": "firejail",
+					"scope": "application"
 				},
-				"remote.SSH.defaultExtensions": {
+				"firejail.defaultExtensions": {
 					"type": "array",
 					"items": {
 						"type": "string"
 					},
-					"description": "List of extensions that should be installed automatically on all SSH hosts.",
+					"description": "Extensions installed automatically inside every jail.",
 					"scope": "application"
 				},
-				"remote.SSH.enableDynamicForwarding": {
-					"type": "boolean",
-					"description": "Whether to use SSH dynamic forwarding to allow setting up new port tunnels over an existing SSH connection.",
-					"scope": "application",
-					"default": true
-				},
-				"remote.SSH.enableAgentForwarding": {
-					"type": "boolean",
-					"markdownDescription": "Enable fixing the remote environment so that the SSH config option `ForwardAgent` will take effect as expected from VS Code's remote extension host.",
-					"scope": "application",
-					"default": true
-				},
-				"remote.SSH.serverDownloadUrlTemplate": {
+				"firejail.serverDownloadUrlTemplate": {
 					"type": "string",
-					"description": "The URL from where the vscode server will be downloaded. You can use the following variables and they will be replaced dynamically:\n- ${quality}: vscode server quality, e.g. stable or insiders\n- ${version}: vscode server version, e.g. 1.69.0\n- ${commit}: vscode server release commit\n- ${arch}: vscode server arch, e.g. x64, armhf, arm64\n- ${release}: release number, vscodium only https://github.com/VSCodium/vscodium/pull/1192",
+					"description": "URL template for the VSCode server download. Variables: ${quality}, ${version}, ${commit}, ${arch}, ${os}, ${release}.",
 					"scope": "application"
 				},
-				"remote.SSH.remotePlatform": {
-					"type": "object",
-					"description": "A map of the remote hostname to the platform for that remote. Valid values: linux, macos, windows.",
-					"scope": "application",
-					"default": {},
-					"additionalProperties": {
-						"type": "string",
-						"enum": [
-							"linux",
-							"macos",
-							"windows"
-						]
-					}
-				},
-				"remote.SSH.remoteServerListenOnSocket": {
-					"type": "boolean",
-					"description": "When true, the remote vscode server will listen on a socket path instead of opening a port. Only valid for Linux and macOS remotes. Requires `AllowStreamLocalForwarding` to be enabled for the SSH server.",
-					"default": false
-				},
-				"remote.SSH.serverInstallPath": {
-					"type": "object",
-					"description": "Specifies custom installation directories for the VS Code server on remote hosts. Maps each remote hostname (or pattern) to an absolute path where the server should be installed. Supports wildcards: use `*` for catch-all, or `*.domain.com` for domain-specific paths. More specific patterns take precedence over general ones. When not specified, the server installs in the default home directory. **Note**: Changing this setting may require manual cleanup of existing server installations in previous locations.",
-					"scope": "application",
-					"default": {},
-					"additionalProperties": {
-						"type": "string"
-					}
-				},
-				"remote.SSH.serverBinaryName": {
+				"firejail.serverVersion": {
 					"type": "string",
-					"description": "The name of the server binary, use this **only if** you are using a client without a corresponding server release",
-					"scope": "application",
-					"default": ""
-				},
-				"remote.SSH.serverVersion": {
-					"type": "string",
-					"description": "The version number of the remote VSCodium server. Can take the values: 'match' (default), 'latest', 'closest' or a specific version (e.g. '1.117.0').",
+					"description": "Server version: 'match' (default), 'latest', 'closest', or a specific version.",
 					"scope": "application",
 					"default": "match"
 				},
-				"remote.SSH.serverValidation": {
+				"firejail.serverValidation": {
 					"type": "string",
-					"description": "Type of server validation: 'strict' (default) enforces that the remote and local server are the same version by matching the commit, 'force' modifies the remote commit to match the local server, 'skip' skips validation all together.",
+					"description": "Server validation mode: 'strict' (default), 'force', or 'skip'.",
 					"scope": "application",
 					"default": "strict",
 					"enum": [
 						"force",
 						"skip",
 						"strict"
-					],
-					"enumDescriptions": [
-						"Modify the commit of the remote server.",
-						"The remote server won't validate the client.",
-						"The remote server and client's commits must match. (default)"
 					]
+				},
+				"firejail.serverBinaryName": {
+					"type": "string",
+					"description": "Override the server binary name. Use only when your client has no matching server release.",
+					"scope": "application",
+					"default": ""
 				}
 			}
 		},
 		"views": {
 			"remote": [
 				{
-					"id": "sshHosts",
-					"name": "SSH Targets",
+					"id": "firejailJails",
+					"name": "Firejail Jails",
 					"group": "targets@1",
-					"remoteName": "ssh-remote"
+					"remoteName": "firejail"
 				}
 			]
 		},
 		"commands": [
 			{
-				"command": "openremotessh.openEmptyWindow",
-				"title": "Connect to Host...",
-				"category": "Remote-SSH"
+				"command": "firejail.openEmptyWindow",
+				"title": "Connect to Jail...",
+				"category": "Firejail"
 			},
 			{
-				"command": "openremotessh.openEmptyWindowInCurrentWindow",
-				"title": "Connect Current Window to Host...",
-				"category": "Remote-SSH"
+				"command": "firejail.openEmptyWindowInCurrentWindow",
+				"title": "Connect Current Window to Jail...",
+				"category": "Firejail"
 			},
 			{
-				"command": "openremotessh.openConfigFile",
-				"title": "Open SSH Configuration File...",
-				"category": "Remote-SSH"
+				"command": "firejail.openConfigFile",
+				"title": "Open Jails Config File...",
+				"category": "Firejail"
 			},
 			{
-				"command": "openremotessh.showLog",
+				"command": "firejail.showLog",
 				"title": "Show Log",
-				"category": "Remote-SSH"
+				"category": "Firejail"
 			},
 			{
-				"command": "openremotessh.explorer.emptyWindowInNewWindow",
-				"title": "Connect to Host in New Window",
-				"icon": "$(empty-window)"
+				"command": "firejail.explorer.add",
+				"title": "Add Jail",
+				"icon": "$(plus)"
 			},
 			{
-				"command": "openremotessh.explorer.emptyWindowInCurrentWindow",
-				"title": "Connect to Host in Current Window"
-			},
-			{
-				"command": "openremotessh.explorer.reopenFolderInCurrentWindow",
-				"title": "Open on SSH Host in Current Window"
-			},
-			{
-				"command": "openremotessh.explorer.reopenFolderInNewWindow",
-				"title": "Open on SSH Host in New Window",
-				"icon": "$(folder-opened)"
-			},
-			{
-				"command": "openremotessh.explorer.deleteFolderHistoryItem",
-				"title": "Remove From Recent List",
-				"icon": "$(x)"
-			},
-			{
-				"command": "openremotessh.explorer.refresh",
-				"title": "Refresh",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "openremotessh.explorer.configure",
+				"command": "firejail.explorer.configure",
 				"title": "Configure",
 				"icon": "$(gear)"
 			},
 			{
-				"command": "openremotessh.explorer.add",
-				"title": "Add New",
-				"icon": "$(plus)"
+				"command": "firejail.explorer.refresh",
+				"title": "Refresh",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "firejail.explorer.edit",
+				"title": "Edit Jail",
+				"icon": "$(edit)"
+			},
+			{
+				"command": "firejail.explorer.remove",
+				"title": "Remove Jail",
+				"icon": "$(trash)"
+			},
+			{
+				"command": "firejail.explorer.openInNewWindow",
+				"title": "Open Jail in New Window",
+				"icon": "$(empty-window)"
+			},
+			{
+				"command": "firejail.explorer.openInCurrentWindow",
+				"title": "Open Jail in Current Window"
 			}
 		],
 		"resourceLabelFormatters": [
 			{
 				"scheme": "vscode-remote",
-				"authority": "ssh-remote+*",
+				"authority": "firejail+*",
 				"formatting": {
 					"label": "${path}",
 					"separator": "/",
 					"tildify": true,
-					"workspaceSuffix": "SSH"
+					"workspaceSuffix": "Firejail"
 				}
 			}
 		],
 		"menus": {
 			"statusBar/remoteIndicator": [
 				{
-					"command": "openremotessh.openEmptyWindow",
-					"when": "remoteName =~ /^ssh-remote$/ && remoteConnectionState == connected",
-					"group": "remote_20_ssh_1general@1"
+					"command": "firejail.openEmptyWindow",
+					"when": "remoteName =~ /^firejail$/ && remoteConnectionState == connected",
+					"group": "remote_20_firejail_1general@1"
 				},
 				{
-					"command": "openremotessh.openEmptyWindowInCurrentWindow",
-					"when": "remoteName =~ /^ssh-remote$/ && remoteConnectionState == connected",
-					"group": "remote_20_ssh_1general@2"
+					"command": "firejail.openEmptyWindowInCurrentWindow",
+					"when": "remoteName =~ /^firejail$/ && remoteConnectionState == connected",
+					"group": "remote_20_firejail_1general@2"
 				},
 				{
-					"command": "openremotessh.openConfigFile",
-					"when": "remoteName =~ /^ssh-remote$/ && remoteConnectionState == connected",
-					"group": "remote_20_ssh_1general@3"
+					"command": "firejail.openConfigFile",
+					"when": "remoteName =~ /^firejail$/ && remoteConnectionState == connected",
+					"group": "remote_20_firejail_1general@3"
 				},
 				{
-					"command": "openremotessh.showLog",
-					"when": "remoteName =~ /^ssh-remote$/ && remoteConnectionState == connected",
-					"group": "remote_20_ssh_1general@4"
+					"command": "firejail.showLog",
+					"when": "remoteName =~ /^firejail$/ && remoteConnectionState == connected",
+					"group": "remote_20_firejail_1general@4"
 				},
 				{
-					"command": "openremotessh.openEmptyWindow",
+					"command": "firejail.openEmptyWindow",
 					"when": "remoteConnectionState == disconnected",
-					"group": "remote_20_ssh_3local@1"
+					"group": "remote_20_firejail_3local@1"
 				},
 				{
-					"command": "openremotessh.openEmptyWindowInCurrentWindow",
+					"command": "firejail.openEmptyWindowInCurrentWindow",
 					"when": "remoteConnectionState == disconnected",
-					"group": "remote_20_ssh_3local@2"
+					"group": "remote_20_firejail_3local@2"
 				},
 				{
-					"command": "openremotessh.openConfigFile",
+					"command": "firejail.openConfigFile",
 					"when": "remoteConnectionState == disconnected",
-					"group": "remote_20_ssh_3local@3"
+					"group": "remote_20_firejail_3local@3"
 				},
 				{
-					"command": "openremotessh.openEmptyWindow",
+					"command": "firejail.openEmptyWindow",
 					"when": "!remoteName && !virtualWorkspace",
-					"group": "remote_20_ssh_3local@5"
+					"group": "remote_20_firejail_3local@5"
 				},
 				{
-					"command": "openremotessh.openEmptyWindowInCurrentWindow",
+					"command": "firejail.openEmptyWindowInCurrentWindow",
 					"when": "!remoteName && !virtualWorkspace",
-					"group": "remote_20_ssh_3local@6"
+					"group": "remote_20_firejail_3local@6"
 				},
 				{
-					"command": "openremotessh.openConfigFile",
+					"command": "firejail.openConfigFile",
 					"when": "!remoteName && !virtualWorkspace",
-					"group": "remote_20_ssh_3local@7"
+					"group": "remote_20_firejail_3local@7"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "openremotessh.explorer.refresh",
+					"command": "firejail.explorer.refresh",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.configure",
+					"command": "firejail.explorer.configure",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.add",
+					"command": "firejail.explorer.add",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.emptyWindowInNewWindow",
+					"command": "firejail.explorer.edit",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.emptyWindowInCurrentWindow",
+					"command": "firejail.explorer.remove",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.reopenFolderInCurrentWindow",
+					"command": "firejail.explorer.openInNewWindow",
 					"when": "false"
 				},
 				{
-					"command": "openremotessh.explorer.reopenFolderInNewWindow",
-					"when": "false"
-				},
-				{
-					"command": "openremotessh.explorer.deleteFolderHistoryItem",
+					"command": "firejail.explorer.openInCurrentWindow",
 					"when": "false"
 				}
 			],
 			"view/title": [
 				{
-					"command": "openremotessh.explorer.add",
-					"when": "view == sshHosts",
+					"command": "firejail.explorer.add",
+					"when": "view == firejailJails",
 					"group": "navigation"
 				},
 				{
-					"command": "openremotessh.explorer.configure",
-					"when": "view == sshHosts",
+					"command": "firejail.explorer.configure",
+					"when": "view == firejailJails",
 					"group": "navigation"
 				},
 				{
-					"command": "openremotessh.explorer.refresh",
-					"when": "view == sshHosts",
+					"command": "firejail.explorer.refresh",
+					"when": "view == firejailJails",
 					"group": "navigation"
 				}
 			],
 			"view/item/context": [
 				{
-					"command": "openremotessh.explorer.emptyWindowInNewWindow",
-					"when": "viewItem =~ /^openremotessh.explorer.host$/",
+					"command": "firejail.explorer.openInNewWindow",
+					"when": "viewItem == firejail.explorer.jail",
 					"group": "inline@1"
 				},
 				{
-					"command": "openremotessh.explorer.emptyWindowInNewWindow",
-					"when": "viewItem =~ /^openremotessh.explorer.host$/",
+					"command": "firejail.explorer.openInNewWindow",
+					"when": "viewItem == firejail.explorer.jail",
 					"group": "navigation@2"
 				},
 				{
-					"command": "openremotessh.explorer.emptyWindowInCurrentWindow",
-					"when": "viewItem =~ /^openremotessh.explorer.host$/",
+					"command": "firejail.explorer.openInCurrentWindow",
+					"when": "viewItem == firejail.explorer.jail",
 					"group": "navigation@1"
 				},
 				{
-					"command": "openremotessh.explorer.reopenFolderInNewWindow",
-					"when": "viewItem == openremotessh.explorer.folder",
-					"group": "inline@1"
-				},
-				{
-					"command": "openremotessh.explorer.reopenFolderInNewWindow",
-					"when": "viewItem == openremotessh.explorer.folder",
-					"group": "navigation@2"
-				},
-				{
-					"command": "openremotessh.explorer.reopenFolderInCurrentWindow",
-					"when": "viewItem == openremotessh.explorer.folder",
-					"group": "navigation@1"
-				},
-				{
-					"command": "openremotessh.explorer.deleteFolderHistoryItem",
-					"when": "viewItem =~ /^openremotessh.explorer.folder/",
+					"command": "firejail.explorer.edit",
+					"when": "viewItem == firejail.explorer.jail",
 					"group": "navigation@3"
 				},
 				{
-					"command": "openremotessh.explorer.deleteFolderHistoryItem",
-					"when": "viewItem =~ /^openremotessh.explorer.folder/",
+					"command": "firejail.explorer.remove",
+					"when": "viewItem == firejail.explorer.jail",
+					"group": "navigation@4"
+				},
+				{
+					"command": "firejail.explorer.remove",
+					"when": "viewItem == firejail.explorer.jail",
 					"group": "inline@2"
 				}
 			]
@@ -429,9 +360,9 @@
 		}
 	},
 	"keywords": [
-		"remote",
+		"firejail",
 		"remote development",
-		"ssh"
+		"sandbox"
 	],
 	"api": "none",
 	"enabledApiProposals": [
