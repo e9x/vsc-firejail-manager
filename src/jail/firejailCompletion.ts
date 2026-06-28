@@ -26,6 +26,7 @@ const JAIL_PROPERTIES: JailProperty[] = [
     { name: 'privateDir', type: 'string', detail: 'Private home directory for the jail (firejail --private=DIR). Supports ~ expansion.' },
     { name: 'privateTmp', type: 'boolean', detail: 'Mount a private, empty /tmp inside the jail (firejail --private-tmp).' },
     { name: 'noprofile', type: 'boolean', detail: 'Do not load any firejail security profile (firejail --noprofile).' },
+    { name: 'tab', type: 'boolean', detail: 'Enable shell tab completion in sandboxes using private or whitelisted home directories (firejail --tab).' },
     { name: 'net', type: 'string', detail: 'Enable a new network namespace on the given interface (firejail --net=INTERFACE).' },
     { name: 'netns', type: 'string', detail: 'Run in a named network namespace (firejail --netns=NAME).' },
     { name: 'dns', type: 'string', detail: 'Set a DNS server for the jail (firejail --dns=ADDRESS).' },

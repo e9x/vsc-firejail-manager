@@ -9,6 +9,7 @@ export type JailConfiguration = {
     privateDir: string;
     privateTmp: boolean;
     noprofile: boolean;
+    tab: boolean;
     // Networking
     net?: string;
     netns?: string;
@@ -119,6 +120,7 @@ export function defaultJail(name: string, privateDir: string): JailConfiguration
         privateDir,
         privateTmp: true,
         noprofile: true,
+        tab: true,
         extraArgs: [],
     };
 }
@@ -135,6 +137,9 @@ export function buildFirejailArgs(jail: JailConfiguration): string[] {
     }
     if (jail.noprofile) {
         args.push('--noprofile');
+    }
+    if (jail.tab) {
+        args.push('--tab');
     }
 
     for (const key of Object.keys(BOOLEAN_FLAGS) as (keyof JailConfiguration)[]) {
@@ -175,6 +180,7 @@ function normalizeJail(raw: Partial<JailConfiguration> & { name: string; private
         privateDir: raw.privateDir,
         privateTmp: raw.privateTmp ?? true,
         noprofile: raw.noprofile ?? true,
+        tab: raw.tab ?? true,
         extraArgs: Array.isArray(raw.extraArgs) ? raw.extraArgs : [],
     };
 

@@ -38,7 +38,7 @@ Jails are stored in a `jails.json` file. By default this lives in the extension'
 A new jail defaults to the equivalent of:
 
 ```
-firejail --private=DIR --private-tmp --noprofile
+firejail --private=DIR --private-tmp --noprofile --tab
 ```
 
 ### Required fields
@@ -50,6 +50,7 @@ firejail --private=DIR --private-tmp --noprofile
 
 - `privateTmp` (default `true`) — private, empty `/tmp` (`--private-tmp`).
 - `noprofile` (default `true`) — don't load any firejail security profile (`--noprofile`).
+- `tab` (default `true`) — enable shell tab completion in sandboxes using private or whitelisted home directories (`--tab`).
 
 ### Networking
 

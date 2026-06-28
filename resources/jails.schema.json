@@ -30,6 +30,11 @@
                 "description": "Do not load any firejail security profile (firejail --noprofile).",
                 "default": true
             },
+            "tab": {
+                "type": "boolean",
+                "description": "Enable shell tab completion in sandboxes using private or whitelisted home directories (firejail --tab).",
+                "default": true
+            },
             "net": {
                 "type": "string",
                 "description": "Enable a new network namespace on the given interface (firejail --net=INTERFACE)."
