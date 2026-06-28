@@ -66,7 +66,10 @@ firejail --private=DIR --private-tmp --noprofile --tab
 
 ### Security
 
-`nonewprivs`, `noroot`, `seccomp`, `capsDropAll` (`--caps.drop=all`), `apparmor` — map to the matching firejail hardening flags.
+- `nonewprivs` (default `true`) — prevent the process from gaining new privileges (`--nonewprivs`).
+- `noroot` (default `true`) — install a user namespace with a single user (`--noroot`). Requires unprivileged user namespaces; set to `false` for jails that need root inside (e.g. package installs).
+
+`seccomp`, `capsDropAll` (`--caps.drop=all`), `apparmor` — map to the matching firejail hardening flags.
 
 ### Filesystem
 

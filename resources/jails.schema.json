@@ -93,11 +93,13 @@
             },
             "nonewprivs": {
                 "type": "boolean",
-                "description": "Prevent the process from gaining new privileges (firejail --nonewprivs)."
+                "description": "Prevent the process from gaining new privileges (firejail --nonewprivs).",
+                "default": true
             },
             "noroot": {
                 "type": "boolean",
-                "description": "Install a user namespace with a single user (firejail --noroot)."
+                "description": "Install a user namespace with a single user (firejail --noroot).",
+                "default": true
             },
             "seccomp": {
                 "type": "boolean",

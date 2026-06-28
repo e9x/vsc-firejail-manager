@@ -27,8 +27,8 @@ export type JailConfiguration = {
     noinput?: boolean;
     privateDev?: boolean;
     // Security
-    nonewprivs?: boolean;
-    noroot?: boolean;
+    nonewprivs: boolean;
+    noroot: boolean;
     seccomp?: boolean;
     capsDropAll?: boolean;
     apparmor?: boolean;
@@ -61,8 +61,6 @@ const BOOLEAN_FLAGS: { [K in keyof JailConfiguration]?: string } = {
     nou2f: '--nou2f',
     noinput: '--noinput',
     privateDev: '--private-dev',
-    nonewprivs: '--nonewprivs',
-    noroot: '--noroot',
     seccomp: '--seccomp',
     apparmor: '--apparmor',
     privateCache: '--private-cache',
@@ -121,6 +119,8 @@ export function defaultJail(name: string, privateDir: string): JailConfiguration
         privateTmp: true,
         noprofile: true,
         tab: true,
+        nonewprivs: true,
+        noroot: true,
         extraArgs: [],
     };
 }
@@ -140,6 +140,12 @@ export function buildFirejailArgs(jail: JailConfiguration): string[] {
     }
     if (jail.tab) {
         args.push('--tab');
+    }
+    if (jail.nonewprivs) {
+        args.push('--nonewprivs');
+    }
+    if (jail.noroot) {
+        args.push('--noroot');
     }
 
     for (const key of Object.keys(BOOLEAN_FLAGS) as (keyof JailConfiguration)[]) {
@@ -181,6 +187,8 @@ function normalizeJail(raw: Partial<JailConfiguration> & { name: string; private
         privateTmp: raw.privateTmp ?? true,
         noprofile: raw.noprofile ?? true,
         tab: raw.tab ?? true,
+        nonewprivs: raw.nonewprivs ?? true,
+        noroot: raw.noroot ?? true,
         extraArgs: Array.isArray(raw.extraArgs) ? raw.extraArgs : [],
     };
 
